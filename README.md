@@ -1,6 +1,6 @@
 # zim-plugin-personio
 
-Arbeitszeiten aus ZIM nach personiio.
+Arbeitszeiten aus ZIM nach [Personio](https://www.personio.de/) übertragen (mein persönliches workflow).
 
 ## Installation
 

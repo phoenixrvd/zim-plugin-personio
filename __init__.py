@@ -9,7 +9,6 @@ from pathlib import Path
 from zim.plugins import PluginClass
 from zim.actions import action
 from zim.formats import get_dumper
-from zim.config import ConfigDict
 from zim.gui.pageview import PageViewExtension
 
 try:
@@ -55,8 +54,9 @@ class PersonioTimeTrackExtension(PageViewExtension):
         work_time = 0.0
 
         for line in lines:
-            if re.match(r'.*(@zp)', line):
-                work_time += self.parse_time(line.strip())
+            matches = re.search(r'@zp +(\d+(,\d+)?)', line.strip())
+            if matches is not None:
+                work_time += float(matches.group(1).replace(',', '.'))
 
         if work_time < .25:
             return
@@ -67,14 +67,6 @@ class PersonioTimeTrackExtension(PageViewExtension):
             .start() \
             .login() \
             .track(date, work_time)
-
-    def parse_time(self, time_line):
-        matches = re.search(r'@zp +(\d+(,\d+)?)', time_line)
-
-        if matches is None:
-            return 0.0
-
-        return float(matches.group(1).replace(',', '.'))
 
 
 class CssPaths:
@@ -145,7 +137,8 @@ class Personio(object):
         pause = self.config['hours_pause']
         intervals = int(hours / max_time)
         rest_time = hours % max_time
-        start = datetime.strptime(date + ' ' + self.config['time_start'], self.config['time_format'])
+        date_time = "{date} {time}".format(date=date, time=self.config['time_start'])
+        start = datetime.strptime(date_time, self.config['time_format'])
 
         for interval in range(0, intervals):
             end = start + timedelta(hours=max_time)
