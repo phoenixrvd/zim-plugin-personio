@@ -136,7 +136,6 @@ class Personio(object):
         max_time = self.config['hours_max']
         pause = self.config['hours_pause']
         intervals = int(hours / max_time)
-        rest_time = hours % max_time
         date_time = "{date} {time}".format(date=date, time=self.config['time_start'])
         start = datetime.strptime(date_time, self.config['time_format'])
 
@@ -145,7 +144,9 @@ class Personio(object):
             self.track_interval(start, end)
             start = end + timedelta(hours=pause)
 
-        end = start + timedelta(hours=rest_time)
-        self.track_interval(start, end)
+        rest_time = hours % max_time
+        if rest_time > 0:
+            end = start + timedelta(hours=rest_time)
+            self.track_interval(start, end)
 
         return self
