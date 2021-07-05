@@ -2,6 +2,8 @@ import sys
 import time
 import re
 import datetime
+import uuid
+import json
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -63,90 +65,82 @@ class PersonioTimeTrackExtension(PageViewExtension):
 
         date = '-'.join(self.pageview.get_page().source_file.pathnames[-3:]).rstrip('.txt')
         config = self.plugin.preferences
-        Personio(config) \
-            .start() \
-            .login() \
-            .track(date, work_time)
-
-
-class CssPaths:
-    EMAIL = '#email'
-    PASSWORD = '#password'
-    SUBMIT_LOGIN_BUTTON = 'form [type=submit]'
+        Personio(config).login().track(date, work_time)
 
 
 class Personio(object):
-    config = {
-        'plugin_path': Path(__file__).parent.resolve(),
-        'url': 'https://',
-        'user': '',
-        'password': '',
-        'time_start': '7:30',
-        'hours_max': 4,
-        'hours_pause': 1,
-        'time_format': '%Y-%m-%d %H:%M',
-    }
+    url = 'https://'
+    user = ''
+    password = ''
+    time_start = '7:30'
+    hours_max = 4
+    hours_pause = 1
+    time_format = '%Y-%m-%d %H:%M'
 
     def __init__(self, config):
-        self.config = {**self.config, **config}
-        self.config['hours_max'] = float(self.config['hours_max'])
-        self.config['hours_pause'] = float(self.config['hours_pause'])
-        self.browser = None
+        self.__dict__.update(config)
 
-    def start(self):
+        self.hours_max = float(self.hours_max)
+        self.hours_pause = float(self.hours_pause)
         self.browser = webdriver.Firefox()
-        self.open(self.config['url'], CssPaths.EMAIL)
-
-        return self
-
-    def open(self, uri, waite_for):
-        self.browser.get(uri)
-
-        WebDriverWait(self.browser, 10).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, waite_for))
-        )
-
-        return self
 
     def element(self, selector):
         return self.browser.find_element_by_css_selector(selector)
 
     def login(self):
-        self.element(CssPaths.EMAIL).send_keys(self.config['user'])
-        self.element(CssPaths.PASSWORD).send_keys(self.config['password'])
-        self.element(CssPaths.SUBMIT_LOGIN_BUTTON).click()
+        self.browser.get(self.url)
+
+        WebDriverWait(self.browser, 10).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, 'form'))
+        )
+
+        self.element('#email').send_keys(self.user)
+        self.element('#password').send_keys(self.password)
+        self.element('form [type=submit]').click()
 
         return self
-
-    def track_interval(self, start, end):
-        time.sleep(.5)
-        js_path = "{dir}/{file}".format(dir=self.config['plugin_path'], file='inject.js')
-        js_date_format = '%Y-%m-%dT%H:%M:00Z'
-        js = Path(js_path) \
-            .read_text() \
-            .replace('{', '{{') \
-            .replace('/%', '{') \
-            .replace('}', '}}') \
-            .replace('%/', '}') \
-            .format(start=start.strftime(js_date_format), end=end.strftime(js_date_format))
-
-        self.browser.execute_script(js)
 
     def track(self, date, hours):
-        max_time = self.config['hours_max']
-        pause = self.config['hours_pause']
+        max_time = self.hours_max
         intervals = int(hours / max_time)
-        date_time = "{date} {time}".format(date=date, time=self.config['time_start'])
-        start = datetime.strptime(date_time, self.config['time_format'])
+        date_time = "{date} {time}".format(date=date, time=self.time_start)
+        employee_id = self.get_employee_id()
+        payload = []
 
+        start = datetime.strptime(date_time, self.time_format)
         for interval in range(0, intervals):
             end = start + timedelta(hours=max_time)
-            self.track_interval(start, end)
-            start = end + timedelta(hours=pause)
+            payload.append(self.format_data(start, end, employee_id))
+            start = end + timedelta(hours=self.hours_pause)
 
-        rest_time = hours % max_time
-        if rest_time > 0:
-            end = start + timedelta(hours=rest_time)
-            self.track_interval(start, end)
+        remaining_time = hours % max_time
+        if remaining_time > 0:
+            end = start + timedelta(hours=remaining_time)
+            payload.append(self.format_data(start, end, employee_id))
+
+        self.submit_intervals(payload)
 
         return self
+
+    def format_data(self, start, end, employee_id):
+        js_date_format = '%Y-%m-%dT%H:%M:00Z'
+        return {
+            'id': str(uuid.uuid4()),
+            'start': start.strftime(js_date_format),
+            'end': end.strftime(js_date_format),
+            'employee_id': employee_id,
+            'comment': '',
+            'project_id': None,
+            'activity_id': None,
+        }
+
+    def get_employee_id(self):
+        return self.browser.execute_script('return window.REDUX_INITIAL_STATE.bladeState.dashboard.absences.employeeId')
+
+    def submit_intervals(self, data):
+        entries = json.dumps(data)
+        js = """window['@personio/request']
+            .postJson( `/api/v1/attendances/periods`, {data})
+            .catch((e) => alert(JSON.parse(e.message).error.message))""".format(data=entries)
+
+        self.browser.execute_script(js)
