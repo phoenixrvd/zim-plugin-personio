@@ -1,17 +1,16 @@
 import sys
-import time
 import re
-import datetime
 import uuid
 import json
 
 from datetime import datetime, timedelta
-from pathlib import Path
 
+from zim.config import ConfigDict
 from zim.plugins import PluginClass
 from zim.actions import action
 from zim.formats import get_dumper
 from zim.gui.pageview import PageViewExtension
+from zim.gui.widgets import Dialog, ErrorDialog
 
 try:
     from selenium import webdriver
@@ -52,7 +51,7 @@ class PersonioTimeTrackExtension(PageViewExtension):
 
     @action(_('_Zeiten nach Personio übertragen'), accelerator='<Control><Shift>H', menuhints='tools')  # T: Menu item
     def on_submit_time_for_personio(self):
-        lines = get_dumper('plain').dump(self.pageview.get_parsetree())
+        lines = get_dumper('plain').dump(self.pageview.page.get_parsetree())
         work_time = 0.0
 
         for line in lines:
@@ -63,9 +62,37 @@ class PersonioTimeTrackExtension(PageViewExtension):
         if work_time < .25:
             return
 
-        date = '-'.join(self.pageview.get_page().source_file.pathnames[-3:]).rstrip('.txt')
+        date = '-'.join(self.pageview.page.source_file.pathnames[-3:]).rstrip('.txt')
         config = self.plugin.preferences
-        Personio(config).login().track(date, work_time)
+        ConfirmationDialog(self.pageview, config, date, work_time).run()
+
+
+class ConfirmationDialog(Dialog):
+
+    def __init__(self, parent: PageViewExtension, config: ConfigDict, date: str, time: float):
+        self.parent = parent
+        self.config = config
+        self.date = date
+        self.time = time
+
+        Dialog.__init__(
+            self,
+            parent,
+            title=_('Bitte den Eintrag überprüfen'),
+            button=_('Alles korrekt. Jetzt Speichern')
+        )
+
+        self.add_text(_('Date: {0}').format(date))
+        self.add_text(_('Time: {0:.2f}').format(time))
+
+    def do_response_ok(self):
+        try:
+            Personio(self.config).login().track(self.date, self.time)
+            return True
+        except Exception as error:
+            ErrorDialog(self, str(error)).run()
+
+        return False
 
 
 class Personio(object):
@@ -82,7 +109,7 @@ class Personio(object):
 
         self.hours_max = float(self.hours_max)
         self.hours_pause = float(self.hours_pause)
-        self.browser = webdriver.Firefox()
+        self.browser = webdriver.Firefox(firefox_binary="/opt/firefox/firefox-bin")
 
     def element(self, selector):
         return self.browser.find_element_by_css_selector(selector)
@@ -144,3 +171,4 @@ class Personio(object):
             .catch((e) => alert(JSON.parse(e.message).error.message))""".format(data=entries)
 
         self.browser.execute_script(js)
+
